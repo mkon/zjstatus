@@ -189,6 +189,7 @@ impl ModuleConfig {
             Mouse::ScrollLeft(_) => return,
             Mouse::ScrollRight(_) => return,
             Mouse::LeftClick(_, y) => y,
+            Mouse::DoubleClick(_, y) => y,
             Mouse::RightClick(_, y) => y,
             Mouse::Hold(_, y) => y,
             Mouse::Release(_, y) => y,
