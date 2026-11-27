@@ -32,6 +32,9 @@ use zjstatus::{
 // Matches the old incidental Zellij session scan cadence.
 const REFRESH_INTERVAL_SECONDS: f64 = 1.0;
 
+/// How often (once per refresh) to try looking the session name up before giving up.
+const SESSION_NAME_LOOKUPS: u8 = 30;
+
 /// A slot's merged plugin configuration; bars with equal configurations share a profile.
 type Configuration = BTreeMap<String, String>;
 
@@ -113,6 +116,9 @@ struct State {
     /// Zellij drops events to a shared plugin until its permissions are granted, and sends the
     /// next ModeUpdate only when the mode changes.
     session_name: Option<String>,
+    /// Lookups of `session_name` left; the session list is unavailable for the first moments
+    /// of a session, so the refresh timer retries.
+    session_name_lookups_left: u8,
     pipe_results: BTreeMap<String, String>,
     incoming_notification: Option<notification::Message>,
     focused_pane_id: Option<PaneId>,
@@ -307,16 +313,27 @@ impl State {
     }
 
     /// Looks the session's name up, as the ModeUpdate carrying it may have been dropped.
-    fn fetch_session_name(&mut self) {
+    /// Returns whether it found one. The session list errors with "Session-scan state not
+    /// initialized" until Zellij's first session scan, so callers retry.
+    fn fetch_session_name(&mut self) -> bool {
+        if self.session_name.is_some() || self.session_name_lookups_left == 0 {
+            return false;
+        }
+        self.session_name_lookups_left -= 1;
+
         match get_session_list() {
             Ok(snapshot) => {
                 if let Some(current) = snapshot.live_sessions.iter().find(|s| s.is_current_session)
                 {
                     self.session_name = Some(current.name.clone());
+                    self.mark_all(UpdateEventMask::Mode);
+                    return true;
                 }
             }
             Err(e) => tracing::debug!("could not get the session list: {e}"),
         }
+
+        false
     }
 
     fn tabs_of(&self, client: Option<ClientId>) -> Vec<TabInfo> {
@@ -536,9 +553,9 @@ impl State {
                     let _ = set_selectable_slot(*slot_id, false);
                 }
 
-                if matches!(result, PermissionStatus::Granted) && self.session_name.is_none() {
+                if matches!(result, PermissionStatus::Granted) {
+                    self.session_name_lookups_left = SESSION_NAME_LOOKUPS;
                     self.fetch_session_name();
-                    self.mark_all(UpdateEventMask::Mode);
                 }
 
                 RenderResponse::All
@@ -613,6 +630,7 @@ impl State {
             Event::Timer(_) => {
                 tracing::Span::current().record("event_type", "Event::Timer");
                 set_timeout(REFRESH_INTERVAL_SECONDS);
+                self.fetch_session_name();
 
                 RenderResponse::All
             }
