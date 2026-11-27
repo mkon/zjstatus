@@ -97,6 +97,7 @@ struct Slot {
 #[derive(Default)]
 struct State {
     got_permissions: bool,
+    requested_permissions: bool,
     pending_events: Vec<(Event, EventContext)>,
     start_time: DateTime<Local>,
 
@@ -149,15 +150,6 @@ impl ZellijSharedPlugin for State {
         #[cfg(feature = "tracing")]
         init_tracing();
 
-        // we need the ReadApplicationState permission to receive the ModeUpdate and TabUpdate
-        // events
-        // we need the RunCommands permission to run "cargo test" in a floating window
-        request_permission(&[
-            PermissionType::ReadApplicationState,
-            PermissionType::ChangeApplicationState,
-            PermissionType::RunCommands,
-        ]);
-
         subscribe(&[
             EventType::Mouse,
             EventType::ModeUpdate,
@@ -179,6 +171,21 @@ impl ZellijSharedPlugin for State {
         self.profiles
             .entry(configuration.clone())
             .or_insert_with(|| Profile::new(&configuration));
+
+        // Zellij shows the permission prompt in the pane of the slot that asks. load() runs
+        // before any slot exists, so a request from there has no pane to show the prompt in and
+        // is never answered; ask from the first slot instead.
+        if !self.requested_permissions {
+            // we need the ReadApplicationState permission to receive the ModeUpdate and
+            // TabUpdate events
+            // we need the RunCommands permission to run "cargo test" in a floating window
+            request_permission(&[
+                PermissionType::ReadApplicationState,
+                PermissionType::ChangeApplicationState,
+                PermissionType::RunCommands,
+            ]);
+            self.requested_permissions = true;
+        }
 
         if self.got_permissions {
             let _ = set_selectable_slot(slot.id, false);
@@ -681,6 +688,20 @@ mod test {
 
     fn configuration(format_left: &str) -> Configuration {
         BTreeMap::from([("format_left".to_owned(), format_left.to_owned())])
+    }
+
+    #[test]
+    fn permissions_are_requested_once_a_slot_exists() {
+        let mut state = State::default();
+        state.load(Configuration::default());
+        assert!(!state.requested_permissions);
+
+        state.slot_added(zellij_tile::prelude::Slot {
+            id: 0,
+            kind: SlotKind::Pane,
+            configuration: configuration("{tabs}"),
+        });
+        assert!(state.requested_permissions);
     }
 
     #[test]
