@@ -18,6 +18,10 @@ use crate::{config::ZellijState, widgets::widget::Widget};
 
 pub const TIMESTAMP_FORMAT: &str = "%s";
 
+/// Context key carrying the `plugin_uuid` of the bar configuration that ran a command, so its
+/// result reaches the right bars when one plugin instance serves several configurations.
+pub const PLUGIN_UUID_CONTEXT_KEY: &str = "plugin_uuid";
+
 lazy_static! {
     static ref COMMAND_REGEX: Regex = Regex::new("_[a-zA-Z0-9]+$").unwrap();
 }
@@ -197,6 +201,7 @@ fn run_command_if_needed(command_config: CommandConfig, name: &str, state: &Zell
 
         let mut context = BTreeMap::new();
         context.insert("name".to_owned(), name.to_owned());
+        context.insert(PLUGIN_UUID_CONTEXT_KEY.to_owned(), state.plugin_uuid.clone());
         context.insert(
             "timestamp".to_owned(),
             ts.format(TIMESTAMP_FORMAT).to_string(),
