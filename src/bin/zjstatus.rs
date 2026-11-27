@@ -109,6 +109,10 @@ struct State {
     focus_client: Option<ClientId>,
     panes: PaneManifest,
     sessions: Vec<SessionInfo>,
+    /// The session's name, for when no ModeUpdate (which normally carries it) has arrived:
+    /// Zellij drops events to a shared plugin until its permissions are granted, and sends the
+    /// next ModeUpdate only when the mode changes.
+    session_name: Option<String>,
     pipe_results: BTreeMap<String, String>,
     incoming_notification: Option<notification::Message>,
     focused_pane_id: Option<PaneId>,
@@ -288,11 +292,31 @@ impl ZellijSharedPlugin for State {
 
 impl State {
     fn mode_of(&self, client: Option<ClientId>) -> ModeInfo {
-        self.modes
+        let mut mode = self
+            .modes
             .get(&client)
             .or_else(|| self.modes.values().next())
             .cloned()
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        if mode.session_name.is_none() {
+            mode.session_name = self.session_name.clone();
+        }
+
+        mode
+    }
+
+    /// Looks the session's name up, as the ModeUpdate carrying it may have been dropped.
+    fn fetch_session_name(&mut self) {
+        match get_session_list() {
+            Ok(snapshot) => {
+                if let Some(current) = snapshot.live_sessions.iter().find(|s| s.is_current_session)
+                {
+                    self.session_name = Some(current.name.clone());
+                }
+            }
+            Err(e) => tracing::debug!("could not get the session list: {e}"),
+        }
     }
 
     fn tabs_of(&self, client: Option<ClientId>) -> Vec<TabInfo> {
@@ -473,6 +497,9 @@ impl State {
                 tracing::Span::current().record("event_type", "Event::ModeUpdate");
                 tracing::debug!(mode = ?mode_info.mode);
 
+                if mode_info.session_name.is_some() {
+                    self.session_name = mode_info.session_name.clone();
+                }
                 self.modes.insert(context.client_id, mode_info);
                 self.mark_all(UpdateEventMask::Mode);
 
@@ -507,6 +534,11 @@ impl State {
 
                 for slot_id in self.slots.keys() {
                     let _ = set_selectable_slot(*slot_id, false);
+                }
+
+                if matches!(result, PermissionStatus::Granted) && self.session_name.is_none() {
+                    self.fetch_session_name();
+                    self.mark_all(UpdateEventMask::Mode);
                 }
 
                 RenderResponse::All
@@ -696,6 +728,30 @@ mod test {
 
         assert_eq!(state.tabs_of(Some(1))[0].name, "one");
         assert_eq!(state.tabs_of(Some(2))[0].name, "two");
+    }
+
+    #[test]
+    fn falls_back_to_the_looked_up_session_name() {
+        let mut state = state_with_slots(&[configuration("{session}")]);
+        state.session_name = Some("looked-up".to_owned());
+
+        assert_eq!(state.mode_of(Some(1)).session_name.as_deref(), Some("looked-up"));
+
+        let mode = ModeInfo {
+            session_name: Some("from-mode-update".to_owned()),
+            ..ModeInfo::default()
+        };
+        let context = EventContext {
+            slot_id: None,
+            client_id: Some(1),
+        };
+        state.handle_event(Event::ModeUpdate(mode), context);
+
+        assert_eq!(
+            state.mode_of(Some(1)).session_name.as_deref(),
+            Some("from-mode-update")
+        );
+        assert_eq!(state.session_name.as_deref(), Some("from-mode-update"));
     }
 
     #[test]
