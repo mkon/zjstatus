@@ -9,6 +9,18 @@ pub enum BorderPosition {
     #[default]
     Top,
     Bottom,
+    /// Above and below the bar; the bar's pane needs 3 rows.
+    Both,
+}
+
+impl BorderPosition {
+    pub fn above(&self) -> bool {
+        matches!(self, BorderPosition::Top | BorderPosition::Both)
+    }
+
+    pub fn below(&self) -> bool {
+        matches!(self, BorderPosition::Bottom | BorderPosition::Both)
+    }
 }
 
 #[derive(Debug)]
@@ -57,6 +69,7 @@ pub fn parse_border_config(config: &BTreeMap<String, String>) -> Option<BorderCo
     let position = match config.get("border_position") {
         Some(pos) => match pos.to_owned().as_str() {
             "bottom" => BorderPosition::Bottom,
+            "both" => BorderPosition::Both,
             _ => BorderPosition::Top,
         },
         None => BorderPosition::Top,

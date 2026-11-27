@@ -5,7 +5,7 @@ use regex::Regex;
 use zellij_tile::prelude::*;
 
 use crate::{
-    border::{BorderConfig, BorderPosition, parse_border_config},
+    border::{BorderConfig, parse_border_config},
     render::FormattedPart,
     widgets::{command::CommandResult, notification, widget::Widget},
 };
@@ -378,12 +378,12 @@ impl ModuleConfig {
 
         if self.border.enabled {
             let mut border_top = "".to_owned();
-            if self.border.enabled && self.border.position == BorderPosition::Top {
+            if self.border.enabled && self.border.position.above() {
                 border_top = format!("{}\n", self.border.draw(state.cols));
             }
 
             let mut border_bottom = "".to_owned();
-            if self.border.enabled && self.border.position == BorderPosition::Bottom {
+            if self.border.enabled && self.border.position.below() {
                 border_bottom = format!("\n{}", self.border.draw(state.cols));
             }
 
